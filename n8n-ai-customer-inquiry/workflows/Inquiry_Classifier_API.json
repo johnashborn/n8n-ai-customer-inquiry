@@ -1,0 +1,280 @@
+{
+  "name": "Inquiry Classifier API",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "customer-inquiry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "24d32c6f-f7f2-468e-81db-cfc6f5b560c5",
+      "name": "Webhook",
+      "webhookId": "361a8cc9-2bda-4adb-a6a5-d1d8276f6ec4"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "469a4eb3-c5c8-4daa-8b06-4dab8818e9c6",
+              "name": "customer_name",
+              "value": "={{ $json.body.customer_name }}",
+              "type": "string"
+            },
+            {
+              "id": "18610896-314e-44e2-b20f-bfcbac149451",
+              "name": "email",
+              "value": "={{ $json.body.email }}",
+              "type": "string"
+            },
+            {
+              "id": "efec2f83-45ad-4889-a687-5084b0d37460",
+              "name": "inquiry",
+              "value": "={{ $json.body.inquiry }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        0
+      ],
+      "id": "cce26a5f-953c-461a-bf9b-2ed93fbd8e54",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1c6cf92-4b71-4ad3-9f3c-58ab288cc8e9",
+              "leftValue": "={{ $json.inquiry }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "c222cbcc-eb0f-4399-9185-15bdeffbe0a2",
+              "leftValue": "={{ ($json.inquiry || \"\").length }}",
+              "rightValue": 3000,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        440,
+        0
+      ],
+      "id": "a9a2881d-1f51-4531-a978-1a679e615378",
+      "name": "Valid Input?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"nvidia/nemotron-3-ultra-550b-a55b:free\",\n  temperature: 0.2,\n  reasoning: { effort: \"low\" },\n  messages: [\n    {\n      role: \"system\",\n      content: \"You are a customer support assistant. Analyze customer inquiries. Return ONLY valid JSON with these fields: category, urgency, summary, suggested_response. Category must be one of Inquiry, Complaint, Support, or Spam. Urgency must be Low, Medium, or High. Do not invent company policies or claim actions have been completed.\"\n    },\n    {\n      role: \"user\",\n      content: \"Customer name: \" + $json.customer_name + \"\\nCustomer inquiry: \" + $json.inquiry\n    }\n  ]\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        -100
+      ],
+      "id": "6493c6e5-edae-4775-b044-2d851907df64",
+      "name": "Classify with AI",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Runs once per item, so several emails in one run are all handled\nconst content = $json.choices?.[0]?.message?.content;\n\nif (!content) {\n  throw new Error(\"No AI response received.\");\n}\n\n// Remove ```json fences, then grab the JSON object even if the model added text around it\nconst cleaned = content\n  .replace(/^```json\\s*/i, \"\")\n  .replace(/^```\\s*/i, \"\")\n  .replace(/\\s*```$/, \"\")\n  .trim();\nconst match = cleaned.match(/\\{[\\s\\S]*\\}/);\n\nlet result;\ntry {\n  result = JSON.parse(match ? match[0] : cleaned);\n} catch (e) {\n  throw new Error(\"AI did not return valid JSON: \" + cleaned.slice(0, 200));\n}\n\nconst allowedCategories = [\"Inquiry\", \"Complaint\", \"Support\", \"Spam\"];\nconst allowedUrgencies = [\"Low\", \"Medium\", \"High\"];\n\nif (!allowedCategories.includes(result.category)) {\n  throw new Error(\"Invalid category returned: \" + result.category);\n}\nif (!allowedUrgencies.includes(result.urgency)) {\n  throw new Error(\"Invalid urgency returned: \" + result.urgency);\n}\nif (typeof result.summary !== \"string\" || typeof result.suggested_response !== \"string\") {\n  throw new Error(\"Missing or invalid response fields.\");\n}\n\nreturn {\n  json: {\n    category: result.category,\n    urgency: result.urgency,\n    summary: result.summary,\n    suggested_response: result.suggested_response\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        -100
+      ],
+      "id": "3371cc50-179b-414a-99be-1b9489a239a3",
+      "name": "Parse & Validate",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1160,
+        -100
+      ],
+      "id": "b1abb1d0-bf14-44bc-a883-f4d9ebfabdbb",
+      "name": "Success (200)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"error\": \"inquiry is required and must be 3000 characters or fewer\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        680,
+        200
+      ],
+      "id": "50772ae2-8365-4e3d-86a3-96db478b2f55",
+      "name": "Bad Request (400)"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"error\": \"AI classification failed. Please try again later.\"\n}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1160,
+        140
+      ],
+      "id": "c0ca0928-710e-4590-8b01-3e2694006d42",
+      "name": "AI Error (502)"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Valid Input?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Input?": {
+      "main": [
+        [
+          {
+            "node": "Classify with AI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Bad Request (400)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify with AI": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Error (502)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate": {
+      "main": [
+        [
+          {
+            "node": "Success (200)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Error (502)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}

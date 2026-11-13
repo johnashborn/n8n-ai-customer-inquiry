@@ -1,0 +1,431 @@
+{
+  "name": "Email Auto-Responder",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "c3153ceb-2774-4197-a62c-a4315fd975b0",
+      "name": "Email Trigger (IMAP)",
+      "credentials": {
+        "imap": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "IMAP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "cc63ba75-e0eb-4629-8eac-f7e5c4589712",
+              "leftValue": "={{ $json.from }}",
+              "rightValue": "noreply",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            },
+            {
+              "id": "c31fdca1-945f-4294-9bdc-6e34fc52b31b",
+              "leftValue": "={{ $json.from }}",
+              "rightValue": "no-reply",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            },
+            {
+              "id": "85a20dc1-32a5-419d-a44a-164864c96a4f",
+              "leftValue": "={{ $json.from }}",
+              "rightValue": "mailer-daemon",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            },
+            {
+              "id": "0b5a0dd1-e953-4485-bf9b-cf23d94597a7",
+              "leftValue": "={{ $json.from }}",
+              "rightValue": "YOUR_OWN_GMAIL@gmail.com",
+              "operator": {
+                "type": "string",
+                "operation": "notContains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.2,
+      "position": [
+        220,
+        0
+      ],
+      "id": "5f83f217-1490-4f08-8f25-307957fe3fc7",
+      "name": "Skip Automated Senders"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "3dbeccb8-1cc1-4fe6-bb20-6bf8739bbcf5",
+              "name": "customer_name",
+              "type": "string",
+              "value": "={{ ($json.from || '').replace(/\\s*<[^>]+>/, '').replace(/\"/g, '').trim() || 'Customer' }}"
+            },
+            {
+              "id": "cb70717c-66bb-4638-b480-e2c1b7f423a8",
+              "name": "email",
+              "type": "string",
+              "value": "={{ (($json.from || '').match(/<([^>]+)>/) || [null, ($json.from || '')])[1].trim() }}"
+            },
+            {
+              "id": "fb0a4034-8127-45c7-a09a-59cced187c9c",
+              "name": "subject",
+              "type": "string",
+              "value": "={{ $json.subject || '(no subject)' }}"
+            },
+            {
+              "id": "0efe8105-e12d-462b-afcb-4490b95d8954",
+              "name": "inquiry",
+              "type": "string",
+              "value": "={{ (($json.textPlain || '').trim()) ? 'Subject: ' + ($json.subject || '') + '\\n\\n' + $json.textPlain.trim() : '' }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        440,
+        0
+      ],
+      "id": "8c7f4b5d-8738-4356-b5c3-43b466b09efa",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "4c0c654a-2422-447a-9e30-c76f835d0876",
+              "leftValue": "={{ $json.inquiry }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "ba63da4d-1d5b-4966-8402-cdc9b455e0a1",
+              "leftValue": "={{ ($json.inquiry || \"\").length }}",
+              "rightValue": 3000,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        660,
+        0
+      ],
+      "id": "651b07e7-b6de-4473-ad8c-870b841fd500",
+      "name": "Valid Input?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: \"nvidia/nemotron-3-ultra-550b-a55b:free\",\n  temperature: 0.2,\n  reasoning: { effort: \"low\" },\n  messages: [\n    {\n      role: \"system\",\n      content: \"You are a customer support assistant. Analyze customer inquiries. Return ONLY valid JSON with these fields: category, urgency, summary, suggested_response. Category must be one of Inquiry, Complaint, Support, or Spam. Urgency must be Low, Medium, or High. Do not invent company policies or claim actions have been completed.\"\n    },\n    {\n      role: \"user\",\n      content: \"Customer name: \" + $json.customer_name + \"\\nCustomer inquiry: \" + $json.inquiry\n    }\n  ]\n}) }}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        900,
+        -100
+      ],
+      "id": "111f24d4-8311-4f59-9452-751c6b3a7fd4",
+      "name": "Classify with AI",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Runs once per item, so several emails in one run are all handled\nconst content = $json.choices?.[0]?.message?.content;\n\nif (!content) {\n  throw new Error(\"No AI response received.\");\n}\n\n// Remove ```json fences, then grab the JSON object even if the model added text around it\nconst cleaned = content\n  .replace(/^```json\\s*/i, \"\")\n  .replace(/^```\\s*/i, \"\")\n  .replace(/\\s*```$/, \"\")\n  .trim();\nconst match = cleaned.match(/\\{[\\s\\S]*\\}/);\n\nlet result;\ntry {\n  result = JSON.parse(match ? match[0] : cleaned);\n} catch (e) {\n  throw new Error(\"AI did not return valid JSON: \" + cleaned.slice(0, 200));\n}\n\nconst allowedCategories = [\"Inquiry\", \"Complaint\", \"Support\", \"Spam\"];\nconst allowedUrgencies = [\"Low\", \"Medium\", \"High\"];\n\nif (!allowedCategories.includes(result.category)) {\n  throw new Error(\"Invalid category returned: \" + result.category);\n}\nif (!allowedUrgencies.includes(result.urgency)) {\n  throw new Error(\"Invalid urgency returned: \" + result.urgency);\n}\nif (typeof result.summary !== \"string\" || typeof result.suggested_response !== \"string\") {\n  throw new Error(\"Missing or invalid response fields.\");\n}\n\nreturn {\n  json: {\n    category: result.category,\n    urgency: result.urgency,\n    summary: result.summary,\n    suggested_response: result.suggested_response\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1140,
+        -100
+      ],
+      "id": "32c1f101-1a4d-4e08-b97e-747be74fa502",
+      "name": "Parse & Validate",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "bbd773bf-5a9e-4b6b-a4f5-297b1e6ff21a",
+              "leftValue": "={{ $json.category }}",
+              "rightValue": "Spam",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "bbaf29a1-81ab-49b6-9e16-e824080a9f65",
+              "leftValue": "={{ $json.urgency }}",
+              "rightValue": "Low",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1380,
+        -100
+      ],
+      "id": "fbbc33f9-fec5-43f4-b6e5-f432bb32e27f",
+      "name": "Is Spam?"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1620,
+        -220
+      ],
+      "id": "e47d3682-07e6-4397-8650-2fb082e2c5d5",
+      "name": "Spam - No Reply"
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Edit Fields').item.json.email }}",
+        "subject": "={{ 'Re: ' + $('Edit Fields').item.json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.suggested_response }}",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1620,
+        -20
+      ],
+      "id": "c4d473f6-53ed-4a0e-a8ae-c4bfc03c018e",
+      "name": "Send Reply",
+      "webhookId": "c7ba2514-7abf-4bef-8881-42661d337815",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_WITH_YOUR_CREDENTIAL",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        900,
+        160
+      ],
+      "id": "47daefcb-616d-47f0-add2-82761ca1a393",
+      "name": "Skip Empty or Long Email"
+    },
+    {
+      "parameters": {
+        "errorMessage": "AI classification failed for this email. Open the execution to see the cause."
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1380,
+        140
+      ],
+      "id": "a2350d32-c25d-4a3e-8dfd-3b0df1ae0cfe",
+      "name": "AI Failed"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Skip Automated Senders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip Automated Senders": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Valid Input?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Input?": {
+      "main": [
+        [
+          {
+            "node": "Classify with AI",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Empty or Long Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify with AI": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate": {
+      "main": [
+        [
+          {
+            "node": "Is Spam?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AI Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Spam?": {
+      "main": [
+        [
+          {
+            "node": "Spam - No Reply",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": []
+}
